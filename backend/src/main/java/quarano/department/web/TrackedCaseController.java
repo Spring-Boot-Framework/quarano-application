@@ -74,7 +74,7 @@ class TrackedCaseController {
 		var summaries = cases.findFiltered(query, type, department.getId())
 				.map(projection.filter(it -> it.equals("select"))
 						.<Function<TrackedCase, Object>> map(it -> representations::toSelect)
-						.orElse(representations::toSummary))
+						.orElse(representations::toSummaryRepresentation))
 				.toList();
 
 		return HalModelBuilder.emptyHalModel()
