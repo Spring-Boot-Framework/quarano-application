@@ -1,6 +1,7 @@
 package quarano.actions.web;
 
 import static org.springframework.web.servlet.mvc.method.annotation.MvcUriComponentsBuilder.*;
+import static quarano.department.web.TrackedCaseLinkRelations.*;
 
 import lombok.AccessLevel;
 import lombok.Data;
@@ -17,6 +18,8 @@ import quarano.department.Comment;
 import quarano.department.TrackedCase;
 import quarano.department.TrackedCase.TrackedCaseIdentifier;
 import quarano.department.web.ExternalTrackedCaseRepresentations;
+import quarano.department.web.TrackedCaseController;
+import quarano.department.web.TrackedCaseLinkRelations;
 import quarano.department.web.TrackedCaseSummary;
 import quarano.diary.DiaryEntry;
 import quarano.diary.web.DiaryController;
@@ -31,13 +34,19 @@ import java.util.stream.Collectors;
 
 import org.springframework.context.support.MessageSourceAccessor;
 import org.springframework.data.util.Streamable;
+import org.springframework.hateoas.IanaLinkRelations;
 import org.springframework.hateoas.Link;
 import org.springframework.hateoas.LinkRelation;
+import org.springframework.hateoas.Links;
 import org.springframework.hateoas.RepresentationModel;
+import org.springframework.hateoas.mediatype.hal.HalModelBuilder;
+import org.springframework.hateoas.server.core.Relation;
+import org.springframework.hateoas.server.mvc.MvcLink;
 import org.springframework.lang.Nullable;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonInclude.Include;
 import com.fasterxml.jackson.annotation.JsonProperty;
@@ -61,6 +70,22 @@ class ActionRepresentations {
 		var summary = trackedCaseRepresentations.toSummary(trackedCase);
 
 		return new CaseActionSummary(trackedCase, items, summary);
+	}
+
+	public RepresentationModel<?> toSummaryRepresentation(CaseActionSummary caseActionSummary) {
+
+		var halModelBuilder = HalModelBuilder.halModelOf(caseActionSummary);
+		var originCases = caseActionSummary.getTrackedCase()
+				.getOriginCases()
+				.stream()
+				.map(trackedCaseRepresentations::toSelect)
+				.collect(Collectors.toUnmodifiableList());
+
+		if (!originCases.isEmpty()) {
+			halModelBuilder.embed(originCases, TrackedCaseLinkRelations.ORIGIN_CASES);
+		}
+
+		return halModelBuilder.build();
 	}
 
 	@RequiredArgsConstructor(staticName = "of")
@@ -186,17 +211,33 @@ class ActionRepresentations {
 		}
 	}
 
-	static class CaseActionSummary {
+	@Relation(collectionRelation = "actions")
+	static class CaseActionSummary extends RepresentationModel<CaseActionSummary> {
 
 		private final ActionItems items;
 		private final TrackedCaseSummary summary;
-		private final TrackedCase trackedCase;
+		private final @Getter(onMethod = @__(@JsonIgnore)) TrackedCase trackedCase;
 
 		CaseActionSummary(TrackedCase trackedCase, ActionItems items, TrackedCaseSummary summary) {
 
 			this.trackedCase = trackedCase;
 			this.items = items;
 			this.summary = summary;
+
+			add(getDefaultLinks(trackedCase));
+		}
+
+		@SuppressWarnings("null")
+		public static Links getDefaultLinks(TrackedCase trackedCase) {
+
+			var caseId = trackedCase.getId();
+			var actionController = on(ActionItemController.class);
+			var caseController = on(TrackedCaseController.class);
+
+			return trackedCase.getOriginCases().stream()
+					.map(it -> MvcLink.of(caseController.getCase(it.getId(), it.getDepartment()), ORIGIN_CASES))
+					.collect(Links.collector()) // produces Links
+					.and(MvcLink.of(actionController.allActions(caseId, null), IanaLinkRelations.SELF));
 		}
 
 		public String getCaseId() {
@@ -270,15 +311,6 @@ class ActionRepresentations {
 
 		boolean hasUnresolvedItems() {
 			return items.hasUnresolvedItems();
-		}
-
-		@JsonProperty("_links")
-		@SuppressWarnings("null")
-		public Map<String, Object> getLinks() {
-
-			var detailsLink = on(ActionItemController.class).allActions(trackedCase.getId(), null);
-
-			return Map.of("self", Map.of("href", fromMethodCall(detailsLink).toUriString()));
 		}
 
 		private List<DescriptionCode> getDescriptionCodes(ItemType type) {
