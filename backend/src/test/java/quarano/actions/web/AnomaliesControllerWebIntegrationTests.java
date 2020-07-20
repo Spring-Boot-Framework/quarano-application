@@ -1,15 +1,20 @@
 package quarano.actions.web;
 
+import static capital.scalable.restdocs.AutoDocumentation.*;
 import static org.assertj.core.api.Assertions.*;
+import static org.springframework.restdocs.hypermedia.HypermediaDocumentation.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
 import lombok.RequiredArgsConstructor;
 import net.minidev.json.JSONArray;
+import quarano.AbstractDocumentation;
+import quarano.DocumentationFlow;
 import quarano.QuaranoWebIntegrationTest;
 import quarano.WithQuaranoUser;
 import quarano.actions.DescriptionCode;
-import quarano.actions.web.ActionRepresentations.ActionsReviewed;
+import quarano.actions.web.AnomaliesRepresentations.ActionsReviewed;
+import quarano.actions.web.AnomaliesRepresentations.CaseActionSummary;
 import quarano.department.TrackedCase;
 import quarano.department.TrackedCase.TrackedCaseIdentifier;
 import quarano.department.TrackedCaseRepository;
@@ -22,7 +27,7 @@ import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.springframework.hateoas.RepresentationModel;
 import org.springframework.http.MediaType;
-import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.ResultHandler;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.jayway.jsonpath.JsonPath;
@@ -33,11 +38,11 @@ import com.jayway.jsonpath.JsonPath;
  */
 @QuaranoWebIntegrationTest
 @RequiredArgsConstructor
-class ActionItemsControllerWebIntegrationTests {
+class AnomaliesControllerWebIntegrationTests extends AbstractDocumentation {
 
-	private final MockMvc mvc;
 	private final TrackedCaseRepository cases;
 	private final ObjectMapper jackson;
+	private final DocumentationFlow flow = DocumentationFlow.of("anomalies");
 
 	@Test
 	@WithQuaranoUser("agent3")
@@ -48,6 +53,7 @@ class ActionItemsControllerWebIntegrationTests {
 
 		var response = mvc.perform(get("/api/hd/actions/{id}", trackedCase.getId()))
 				.andExpect(status().isOk())
+				.andDo(documentAnomaly())
 				.andReturn().getResponse().getContentAsString();
 
 		var document = JsonPath.parse(response);
@@ -106,10 +112,11 @@ class ActionItemsControllerWebIntegrationTests {
 
 		var actionsResponse = mvc.perform(get("/api/hd/actions"))
 				.andExpect(status().isOk())
+				.andDo(documentAnomalies())
 				.andReturn().getResponse().getContentAsString();
 
 		var actionsDocument = JsonPath.parse(actionsResponse);
-		var contactCaseId = actionsDocument.read("$[1].caseId", String.class);
+		var contactCaseId = actionsDocument.read("$._embedded.anomalies[1].caseId", String.class);
 
 		ActionsReviewed reviewed = new ActionsReviewed()
 				.setComment("Comment!");
@@ -135,12 +142,11 @@ class ActionItemsControllerWebIntegrationTests {
 	@Test
 	@WithQuaranoUser("agent3")
 	void obtainsUnresolvedActions() throws Exception {
-		// resolv actions
+
 		var trackedCase = cases.findByTrackedPerson(TrackedPersonDataInitializer.VALID_TRACKED_PERSON3_ID_DEP2)
 				.orElseThrow();
 
-		ActionsReviewed reviewed = new ActionsReviewed();
-		reviewed.setComment("Comment!");
+		var reviewed = new ActionsReviewed().setComment("Comment!");
 
 		mvc.perform(put("/api/hd/actions/{id}/resolve", trackedCase.getId())
 				.content(jackson.writeValueAsString(reviewed))
@@ -153,13 +159,14 @@ class ActionItemsControllerWebIntegrationTests {
 				.andReturn().getResponse().getContentAsString();
 
 		var document = JsonPath.parse(response);
+		var anomalies = JsonPath.parse(document.read("$._embedded.anomalies", JSONArray.class));
 
-		assertThat(document.read("$", JSONArray.class)).hasSize(2);
-		assertThat(document.read("$[0].healthSummary", JSONArray.class)).isEqualTo(List.of());
-		assertThat(document.read("$[0].processSummary", JSONArray.class))
+		assertThat(anomalies.read("$", JSONArray.class)).hasSize(2);
+		assertThat(anomalies.read("$[0].healthSummary", JSONArray.class)).isEqualTo(List.of());
+		assertThat(anomalies.read("$[0].processSummary", JSONArray.class))
 				.isEqualTo(List.of(DescriptionCode.MISSING_DETAILS_CONTACT.name()));
-		assertThat(document.read("$[1].healthSummary", JSONArray.class)).isEqualTo(List.of());
-		assertThat(document.read("$[1].processSummary", JSONArray.class))
+		assertThat(anomalies.read("$[1].healthSummary", JSONArray.class)).isEqualTo(List.of());
+		assertThat(anomalies.read("$[1].processSummary", JSONArray.class))
 				.isEqualTo(List.of(DescriptionCode.MISSING_DETAILS_CONTACT.name()));
 	}
 
@@ -173,12 +180,11 @@ class ActionItemsControllerWebIntegrationTests {
 				.andReturn().getResponse().getContentAsString();
 
 		var actionsDocument = JsonPath.parse(actionsResponse);
-		var contactCaseId = actionsDocument.read("$[1].caseId", String.class);
+		var contactCaseId = actionsDocument.read("$._embedded.anomalies.[1].caseId", String.class);
 
 		// conclude the case
 		cases.findById(TrackedCaseIdentifier.of(UUID.fromString(contactCaseId)))
 				.map(TrackedCase::conclude)
-
 				.map(cases::save)
 				.orElseThrow();
 
@@ -191,5 +197,18 @@ class ActionItemsControllerWebIntegrationTests {
 
 		// check that case is not contained anymore
 		assertThat(cases).doesNotContain(contactCaseId);
+	}
+
+	private ResultHandler documentAnomalies() {
+		return flow.document("access-anomalies", responseFields().responseBodyAsType(CaseActionSummary.class));
+	}
+
+	private ResultHandler documentAnomaly() {
+
+		var links = relaxedLinks(
+				linkWithRel(AnomaliesLinkRelations.RESOLVE.value())
+						.description("Resolve this particular set of anomalies. See <<agent.anomalies.resolve>> for details."));
+
+		return flow.document("access-anomaly", links);
 	}
 }

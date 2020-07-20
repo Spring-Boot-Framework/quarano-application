@@ -6,9 +6,9 @@ import quarano.account.Department;
 import quarano.account.Department.DepartmentIdentifier;
 import quarano.actions.ActionItemRepository;
 import quarano.actions.ActionItemsManagement;
-import quarano.actions.web.ActionRepresentations.ActionsReviewed;
-import quarano.actions.web.ActionRepresentations.CaseActionSummary;
-import quarano.actions.web.ActionRepresentations.CaseActionsRepresentation;
+import quarano.actions.web.AnomaliesRepresentations.ActionsReviewed;
+import quarano.actions.web.AnomaliesRepresentations.CaseActionSummary;
+import quarano.actions.web.AnomaliesRepresentations.CaseActionsRepresentation;
 import quarano.core.web.LoggedIn;
 import quarano.core.web.MappedPayloads;
 import quarano.department.TrackedCase;
@@ -16,10 +16,12 @@ import quarano.department.TrackedCase.TrackedCaseIdentifier;
 import quarano.department.TrackedCaseRepository;
 
 import java.util.Comparator;
-import java.util.stream.Stream;
+import java.util.stream.Collectors;
 
 import javax.validation.Valid;
 
+import org.springframework.hateoas.RepresentationModel;
+import org.springframework.hateoas.mediatype.hal.HalModelBuilder;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.ResponseEntity;
 import org.springframework.validation.Errors;
@@ -32,17 +34,20 @@ import org.springframework.web.bind.annotation.RestController;
 /**
  * @author Oliver Drotbohm
  */
+/**
+ * @author Oliver Drotbohm
+ */
 @RestController
 @RequiredArgsConstructor
-class ActionItemController {
+public class AnomaliesController {
 
 	private final @NonNull ActionItemRepository items;
 	private final @NonNull ActionItemsManagement actionItems;
 	private final @NonNull TrackedCaseRepository cases;
-	private final @NonNull ActionRepresentations representations;
+	private final @NonNull AnomaliesRepresentations representations;
 
 	@GetMapping("/api/hd/actions/{identifier}")
-	HttpEntity<?> allActions(@PathVariable TrackedCaseIdentifier identifier,
+	HttpEntity<CaseActionsRepresentation> getAnomalies(@PathVariable TrackedCaseIdentifier identifier,
 			@LoggedIn DepartmentIdentifier department) {
 
 		return ResponseEntity.of(cases.findById(identifier)
@@ -63,17 +68,22 @@ class ActionItemController {
 				.notFoundIf(trackedCase == null)
 				.map(ActionsReviewed::getComment)
 				.peek(it -> actionItems.resolveItemsFor(trackedCase, it))
-				.concludeIfValid(__ -> allActions(identifier, department));
+				.concludeIfValid(__ -> getAnomalies(identifier, department));
 	}
 
 	@GetMapping("/api/hd/actions")
-	Stream<?> getActions(@LoggedIn Department department) {
+	public RepresentationModel<?> getAllCasesByAnomalies(@LoggedIn Department department) {
 
-		return cases.findByDepartmentId(department.getId())
+		var collect = cases.findByDepartmentId(department.getId())
 				.map(it -> representations.toSummary(it, items.findUnresolvedByActiveCase(it)))
 				.stream()
 				.filter(CaseActionSummary::hasUnresolvedItems)
-				.sorted(Comparator.comparing(CaseActionSummary::getPriority).reversed());
+				.sorted(Comparator.comparing(CaseActionSummary::getPriority).reversed())
+				.collect(Collectors.toList());
+
+		return HalModelBuilder.halModel()
+				.embed(collect, CaseActionSummary.class)
+				.build();
 	}
 
 	private CaseActionsRepresentation toRepresentation(TrackedCase trackedCase) {

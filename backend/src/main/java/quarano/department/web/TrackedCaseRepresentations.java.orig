@@ -45,8 +45,11 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
+<<<<<<< HEAD
 import java.util.Map;
 import java.util.function.Function;
+=======
+>>>>>>> 51ceb59e... Hacking.
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
@@ -71,9 +74,12 @@ import org.springframework.validation.Errors;
 import org.springframework.validation.SmartValidator;
 import org.springframework.validation.annotation.Validated;
 
+<<<<<<< HEAD
 import com.fasterxml.jackson.annotation.JsonAnyGetter;
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonProperty;
+=======
+>>>>>>> 51ceb59e... Hacking.
 import com.fasterxml.jackson.annotation.JsonUnwrapped;
 
 /**

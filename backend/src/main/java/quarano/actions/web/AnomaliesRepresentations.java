@@ -1,13 +1,28 @@
+/*
+ * Copyright 2020 the original author or authors.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      https://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package quarano.actions.web;
 
 import static org.springframework.web.servlet.mvc.method.annotation.MvcUriComponentsBuilder.*;
-import static quarano.department.web.TrackedCaseLinkRelations.*;
 
 import lombok.AccessLevel;
 import lombok.Data;
 import lombok.Getter;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
+import lombok.Value;
 import quarano.actions.ActionItem;
 import quarano.actions.ActionItem.ItemType;
 import quarano.actions.ActionItems;
@@ -18,7 +33,6 @@ import quarano.department.Comment;
 import quarano.department.TrackedCase;
 import quarano.department.TrackedCase.TrackedCaseIdentifier;
 import quarano.department.web.ExternalTrackedCaseRepresentations;
-import quarano.department.web.TrackedCaseController;
 import quarano.department.web.TrackedCaseSummary;
 import quarano.diary.DiaryEntry;
 import quarano.diary.web.DiaryController;
@@ -33,9 +47,8 @@ import java.util.stream.Collectors;
 
 import org.springframework.context.support.MessageSourceAccessor;
 import org.springframework.data.util.Streamable;
-import org.springframework.hateoas.LinkRelation;
 import org.springframework.hateoas.RepresentationModel;
-import org.springframework.hateoas.server.mvc.MvcLink;
+import org.springframework.hateoas.server.core.Relation;
 import org.springframework.lang.Nullable;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
@@ -49,20 +62,30 @@ import com.fasterxml.jackson.annotation.JsonProperty;
  */
 @Component
 @RequiredArgsConstructor
-class ActionRepresentations {
+class AnomaliesRepresentations {
 
-	private final MessageSourceAccessor messages;
+	private final @NonNull MessageSourceAccessor messages;
 	private final @NonNull ExternalTrackedCaseRepresentations trackedCaseRepresentations;
+	private final AnomaliesLinkRelations links = new AnomaliesLinkRelations();
 
-	public CaseActionsRepresentation toRepresentation(TrackedCase trackedCase, ActionItems items) {
-		return CaseActionsRepresentation.of(trackedCase, items, messages);
+	CaseActionsRepresentation toRepresentation(TrackedCase trackedCase, ActionItems items) {
+
+		return CaseActionsRepresentation.of(trackedCase, items, messages)
+				.add(links.getLinksFor(trackedCase.getId(), items));
 	}
 
+	/**
+	 * @param trackedCase
+	 * @param items
+	 * @param summary
+	 * @return
+	 */
 	public CaseActionSummary toSummary(TrackedCase trackedCase, ActionItems items) {
 
 		var summary = trackedCaseRepresentations.toSummary(trackedCase);
 
-		return new CaseActionSummary(trackedCase, items, summary);
+		return new CaseActionSummary(trackedCase, items, summary)
+				.add(links.getLinksFor(trackedCase.getId(), items));
 	}
 
 	@RequiredArgsConstructor(staticName = "of")
@@ -117,46 +140,31 @@ class ActionRepresentations {
 		}
 	}
 
-	@RequiredArgsConstructor(access = AccessLevel.PRIVATE)
+	@RequiredArgsConstructor(access = AccessLevel.PRIVATE, staticName = "of")
 	static class CaseActionsRepresentation extends RepresentationModel<CaseActionsRepresentation> {
-
-		private static final LinkRelation RESOLVE_REL = LinkRelation.of("resolve");
 
 		private final TrackedCase trackedCase;
 		private final ActionItems items;
 		private final MessageSourceAccessor messages;
 
-		@SuppressWarnings("null")
-		public static CaseActionsRepresentation of(TrackedCase trackedCase, ActionItems items,
-				MessageSourceAccessor messages) {
-
-			var trackedCaseController = on(TrackedCaseController.class);
-			var actionItemController = on(ActionItemController.class);
-
-			return new CaseActionsRepresentation(trackedCase, items, messages)
-					.add(MvcLink.of(trackedCaseController.getCase(trackedCase.getId(), trackedCase.getDepartment()), CASE))
-					.addIf(items.hasUnresolvedItemsForManualResolution(),
-							() -> MvcLink.of(actionItemController.resolveActions(trackedCase.getId(), null, null, null),
-									RESOLVE_REL));
-		}
-
 		public TrackedCaseIdentifier getCaseId() {
 			return trackedCase.getId();
 		}
 
-		public List<Map<?, ?>> getComments() {
+		public List<CommentDto> getComments() {
 
 			return trackedCase.getComments().stream()
 					.sorted(Comment.BY_DATE_DESCENDING)
-					.map(it -> Map.of("date", it.getDate(), "comment", it.getText()))
+					.map(it -> new CommentDto(it.getDate(), it.getText()))
 					.collect(Collectors.toList());
 		}
 
-		public Map<String, Object> getAnomalies() {
+		public GroupedAnomalies getAnomalies() {
 
-			return Map.of("health", toDailyItems(items.getHealthItems(), false),
-					"process", toDailyItems(items.getProcessItems(), false),
-					"resolved", toDailyItems(items.getResolvedItems(), true));
+			return new GroupedAnomalies(
+					toDailyItems(items.getHealthItems(), false),
+					toDailyItems(items.getProcessItems(), false),
+					toDailyItems(items.getResolvedItems(), true));
 		}
 
 		private List<DailyItems> toDailyItems(Streamable<ActionItem> items, boolean done) {
@@ -168,6 +176,20 @@ class ActionRepresentations {
 					.map(it -> new DailyItems(it.getKey(), it.getValue(), messages))
 					.sorted(Comparator.comparing(DailyItems::getDate))
 					.collect(Collectors.toUnmodifiableList());
+		}
+
+		@Value
+		private static class CommentDto {
+			LocalDateTime date;
+			String comment;
+		}
+
+		@Value
+		private static class GroupedAnomalies {
+
+			List<DailyItems> health;
+			List<DailyItems> process;
+			List<DailyItems> resolved;
 		}
 
 		@Getter
@@ -188,7 +210,8 @@ class ActionRepresentations {
 		}
 	}
 
-	static class CaseActionSummary {
+	@Relation(collectionRelation = "anomalies")
+	static class CaseActionSummary extends RepresentationModel<CaseActionSummary> {
 
 		private final ActionItems items;
 		private final TrackedCaseSummary summary;
@@ -199,6 +222,7 @@ class ActionRepresentations {
 			this.trackedCase = trackedCase;
 			this.items = items;
 			this.summary = summary;
+
 		}
 
 		public String getCaseId() {
@@ -272,15 +296,6 @@ class ActionRepresentations {
 
 		boolean hasUnresolvedItems() {
 			return items.hasUnresolvedItems();
-		}
-
-		@JsonProperty("_links")
-		@SuppressWarnings("null")
-		public Map<String, Object> getLinks() {
-
-			var detailsLink = on(ActionItemController.class).allActions(trackedCase.getId(), null);
-
-			return Map.of("self", Map.of("href", fromMethodCall(detailsLink).toUriString()));
 		}
 
 		private List<DescriptionCode> getDescriptionCodes(ItemType type) {
